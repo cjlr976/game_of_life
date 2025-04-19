@@ -38,35 +38,46 @@ class GameOfLife:
         """
         Initialize a GameOfLife instance
         """
-
         # Read the configuration file
         self._config = self._get_config()
 
-        # If provided, set the random seed (to create initial random patterns)
+        # Set the random seed if provided
         if self._config['random_seed'] is not None:
             random.seed(self._config['random_seed'])
 
-        # Size of the grid:
-        self._n_cols = self._config['width'] // self._config['cell_size']
-        self._n_rows = self._config['height'] // self._config['cell_size']
-        self._n_cells = self._n_rows * self._n_cols
-
-        # Initialize the Pygame elements
+        # Initialize Pygame
         pygame.init()
         self._screen = pygame.display.set_mode(
-            (self._config['width'], self._config['height'])
-        )
-        pygame.display.set_caption(
-            self._config['screen_caption'].format(pat='None', paused='paused')
+            (self._config['width'], self._config['height']),
+            pygame.RESIZABLE  # Allow the window to be resizable
         )
         self.clock = pygame.time.Clock()
 
-        # Elements of the simulation:
-        self._living_cells = set()  # set of (x,y) positions of living cells
-        self._is_paused = True  # whether the simulation is running or frozen
-        self._run_next_step = False
-        self._current_pattern = None  # information found in the caption
+        # Initialize grid dimensions
+        self._update_grid_dimensions(self._config['width'], self._config['height'])
 
+        # Simulation elements
+        self._living_cells = set()
+        self._is_paused = True
+        self._run_next_step = False
+        self._current_pattern = None
+        self._generation = 0
+
+        # Store the current window title
+        self._current_title = ""
+
+    def _update_grid_dimensions(self, width: int, height: int) -> None:
+        """
+        Update the grid dimensions based on the window size.
+
+        :param width: New width of the window
+        :param height: New height of the window
+        """
+        self._config['width'] = width
+        self._config['height'] = height
+        self._n_cols = width // self._config['cell_size']
+        self._n_rows = height // self._config['cell_size']
+        self._n_cells = self._n_rows * self._n_cols
 
     @staticmethod
     def _get_config() -> Dict[str, Any]:
@@ -78,8 +89,8 @@ class GameOfLife:
         """
 
         this_file_path = os.path.abspath(__file__)
-        project_path = '/'.join(this_file_path.split('/')[:-1])
-        config_path = project_path + '/config.yml'
+        project_path = os.path.dirname(this_file_path)
+        config_path = os.path.join(project_path, 'config.yml')
 
         with open(config_path, 'r') as yml_file:
             config = yaml.safe_load(yml_file)[0]['config']
@@ -123,11 +134,19 @@ class GameOfLife:
             raise ValueError("the given pattern 'id_' must be between 1 and 9")
 
         this_file_path = os.path.abspath(__file__)
-        project_path = '/'.join(this_file_path.split('/')[:-1])
-        seed_patterns_path = project_path + '/seed_patterns.yml'
+        project_path = os.path.dirname(this_file_path)
+        seed_patterns_path = os.path.join(project_path, 'seed_patterns.yml')
 
-        with open(seed_patterns_path, 'r') as yml_file:
-            binary_pattern = yaml.safe_load(yml_file)[0]['patterns'][id_]
+        try:
+            with open(seed_patterns_path, 'r') as yml_file:
+                binary_pattern = yaml.safe_load(yml_file)[0]['patterns'][id_]
+        except FileNotFoundError:
+            raise FileNotFoundError(f"File not found: {seed_patterns_path}")
+        except KeyError:
+            raise KeyError(f"Pattern ID {id_} not found in seed_patterns.yml")
+        except yaml.YAMLError as e:
+            raise ValueError(f"Error parsing YAML file: {e}")
+
         # Create a binary two-dimensional array {zeros: dead; ones: living}
         binary_pattern = np.array(binary_pattern)
         # Compute the top-left corner to place the pattern in the center
@@ -147,109 +166,67 @@ class GameOfLife:
 
     def process_events(self) -> bool:
         """
-        Process the actions carried out by the user:
-            - Mouse click: to set cells to dead/living states
-            - KeyBoard:
-                - 'space_bar': pause/resume the simulation
-                - 'g': generate an initial random pattern
-                - 'c': clear the screen, empty the grid (kill all the cells)
-                - '->' (right arrow): run the next step of the simulation
-                - from '0' to '9': generate one of the available pre-defined
-                    initial patterns (found in 'seed_patterns.yml')
-        :return: whether to go on with the simulation
+        Process user input events.
         """
-
         for event in pygame.event.get():
-
             if event.type == pygame.QUIT:
-                return False  # quit the simulation
+                return False
 
-            if event.type == pygame.MOUSEBUTTONDOWN:  # TODO:
-                # kill living cells or bring dead cells back to life
-                x, y = pygame.mouse.get_pos()
+            if event.type == pygame.VIDEORESIZE:
+                # Handle window resizing
+                new_width, new_height = event.w, event.h
+                self._screen = pygame.display.set_mode((new_width, new_height), pygame.RESIZABLE)
+                self._update_grid_dimensions(new_width, new_height)
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                x, y = event.pos
+                # Check if "Zoom In" button is clicked
+                if 10 <= x <= 110 and 10 <= y <= 50:
+                    self._config['cell_size'] = min(self._config['cell_size'] + 1, 50)  # Max cell size
+                    self._update_grid_dimensions(self._config['width'], self._config['height'])
+                # Check if "Zoom Out" button is clicked
+                elif 120 <= x <= 220 and 10 <= y <= 50:
+                    self._config['cell_size'] = max(self._config['cell_size'] - 1, 5)  # Min cell size
+                    self._update_grid_dimensions(self._config['width'], self._config['height'])
+
+                # Toggle cell state (alive/dead)
                 col = x // self._config['cell_size']
                 row = y // self._config['cell_size']
                 cell = Cell((col, row))
-                if cell in self._living_cells:  # kill a living cell
-                    self._living_cells.remove(cell)  # TODO:
-                else:  # bring the dead cell back to livr
+                if cell in self._living_cells:
+                    self._living_cells.remove(cell)
+                else:
                     self._living_cells.add(cell)
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
-                    # pause/resume the simulation
                     self._is_paused = not self._is_paused
                 elif event.key == pygame.K_RIGHT and self._is_paused:
-                    # run the next step of the simulation
                     self._run_next_step = True
                 elif event.key == pygame.K_c:
-                    # clear the screen, empty the grid (kill all the cells)
+                    # Clear the grid and reset the generation counter
                     self._living_cells.clear()
                     self._is_paused = True
+                    self._generation = 0  # Reset generation counter
                 elif event.key == pygame.K_g:
-                    # generate an initial random pattern
                     self._living_cells = self._generate_random_init_grid()
                     self._is_paused, self._current_pattern = True, 'Rand'
-                elif event.key == pygame.K_1:  # pattern 1 (seed_patterns.yml)
-                    self._living_cells = self._generate_seed_pattern(id_=1)
-                    self._is_paused, self._current_pattern = True, '1'
-                elif event.key == pygame.K_2:  # pattern 2 (seed_patterns.yml)
-                    self._living_cells = self._generate_seed_pattern(id_=2)
-                    self._is_paused, self._current_pattern = True, '2'
-                elif event.key == pygame.K_3:  # pattern 3 (seed_patterns.yml)
-                    self._living_cells = self._generate_seed_pattern(id_=3)
-                    self._is_paused, self._current_pattern = True, '3'
-                elif event.key == pygame.K_4:  # pattern 4 (seed_patterns.yml)
-                    self._living_cells = self._generate_seed_pattern(id_=4)
-                    self._is_paused, self._current_pattern = True, '4'
-                elif event.key == pygame.K_5:  # pattern 5 (seed_patterns.yml)
-                    self._living_cells = self._generate_seed_pattern(id_=5)
-                    self._is_paused, self._current_pattern = True, '5'
-                elif event.key == pygame.K_6:  # pattern 6 (seed_patterns.yml)
-                    self._living_cells = self._generate_seed_pattern(id_=6)
-                    self._is_paused, self._current_pattern = True, '6'
-                elif event.key == pygame.K_7:  # pattern 7 (seed_patterns.yml)
-                    self._living_cells = self._generate_seed_pattern(id_=7)
-                    self._is_paused, self._current_pattern = True, '7'
-                elif event.key == pygame.K_8:  # pattern 8 (seed_patterns.yml)
-                    self._living_cells = self._generate_seed_pattern(id_=8)
-                    self._is_paused, self._current_pattern = True, '8'
-                elif event.key == pygame.K_9:  # pattern 9 (seed_patterns.yml)
-                    self._living_cells = self._generate_seed_pattern(id_=9)
-                    self._is_paused, self._current_pattern = True, '9'
-        return True  # go on with the simulation
+                elif pygame.K_1 <= event.key <= pygame.K_9:
+                    pattern_id = event.key - pygame.K_0
+                    self._living_cells = self._generate_seed_pattern(id_=pattern_id)
+                    self._is_paused, self._current_pattern = True, str(pattern_id)
+        return True
 
 
     def run_logic(self) -> None:
         """
         Update the grid following the Rules of the game.
-        At each step in time, the following transitions occur:
-            - Underpopulation:
-                Any living cell with fewer than two living neighbours dies.
-            - Survival:
-                Any living cell with two or three living neighbours lives on to
-                the next generation
-            - Overpopulation:
-                Any living cell with more than three living neighbours dies.
-            - Reproduction:
-                Any dead cell with exactly three living neighbours becomes a
-                living cell.
-        NOTE: the exact values of these parameters can be changed in the
-        configuration file 'config.yml'. Feel free to test different settings.
-
-        :return: None. The '_living_cells' attribute is updated
         """
-
-        pygame.display.set_caption(
-            self._config['screen_caption'].format(
-                pat=self._current_pattern,
-                paused='paused' if self._is_paused else 'running')
-        )
-
         if self._is_paused and not self._run_next_step:
-                return  # do nothing, wait until the simulation is resumed
+            self._update_window_title()  # Update title even when paused
+            return  # Do nothing, wait until the simulation is resumed
 
-        if self._config['sleep'] is not None:  # slow down the simulation
+        if self._config['sleep'] is not None:  # Slow down the simulation
             time.sleep(self._config['sleep'])
 
         # Set containing all the neighbors of the currently living cells
@@ -284,9 +261,19 @@ class GameOfLife:
             )
             if len(cell_living_neighbors) == self._config['reproduction']:
                 new_living_cells.add(cell)
+
         # Update the '_living_cells' attribute with the new generation
         self._living_cells = new_living_cells
-        self._run_next_step = False  # it might be already False
+
+        # Increment generation counter for both running and single-step modes
+        if not self._is_paused or self._run_next_step:
+            self._generation += 1
+
+        # Reset the single-step flag
+        self._run_next_step = False
+
+        # Update the window title
+        self._update_window_title()
 
 
     def _get_neighbors(self, cell: Cell) -> List[Cell]:
@@ -305,28 +292,29 @@ class GameOfLife:
         delta_row_vals, delta_col_vals = [-1, 0, 1], [-1, 0, 1]
 
         # Update the delta values if the cell is on the edge of the grid
-        if row == self._n_rows-1:  # if 'row' is the bottom row
-            if grid_is_infinite:  # unbounded grid, bottom neighbor at the top
-                delta_row_vals[-1] = - self._n_rows + 1
-            else:  # bounded grid, 'row' has no neighbors below.
-                delta_row_vals.pop()  # remove last delta_row value
+        if row == self._n_rows - 1:  # Bottom row
+            if grid_is_infinite:
+                delta_row_vals[-1] = -self._n_rows + 1
+            else:
+                delta_row_vals = delta_row_vals[:-1]  # Remove last value
 
-        elif row == 0:  # if 'row' is the top row
-            if grid_is_infinite:  # unbounded grid, top neighbor at the bottom
+        elif row == 0:  # Top row
+            if grid_is_infinite:
                 delta_row_vals[0] = self._n_rows - 1
-            else:  # bounded grid, 'row' has no neighbors above.
-                delta_row_vals.pop(0)  # remove the first delta_row value
+            else:
+                delta_row_vals = delta_row_vals[1:]  # Remove first value
 
-        if col == self._n_cols-1:  # if 'col' is the rightmost column
-            if grid_is_infinite:  # unbounded grid, right neighbor on the left
-                delta_col_vals[-1] = - self._n_cols + 1
-            else:  # bounded grid, 'col' has no neighbors on the right side
-                delta_col_vals.pop()  # remove the last delta_col value
-        elif col == 0:  # if 'col' is the leftmost column
-            if grid_is_infinite:  # unbounded grid, left neighbor on the right
+        if col == self._n_cols - 1:  # Rightmost column
+            if grid_is_infinite:
+                delta_col_vals[-1] = -self._n_cols + 1
+            else:
+                delta_col_vals = delta_col_vals[:-1]  # Remove last value
+
+        elif col == 0:  # Leftmost column
+            if grid_is_infinite:
                 delta_col_vals[0] = self._n_cols - 1
-            else:  # bounded grid, 'col' as no neighbors on the left side
-                delta_col_vals.pop(0)  # remove the first delta_col value
+            else:
+                delta_col_vals = delta_col_vals[1:]  # Remove first value
 
         neighbors = []  # neighbors of the given 'cell' (living or dead)
         for delta_col in delta_col_vals:
@@ -345,7 +333,6 @@ class GameOfLife:
 
         :return: None. Updates the screen content.
         """
-
         self._screen.fill(self._config['dead_cell_color'])  # background
         cell_size = self._config['cell_size']
 
@@ -354,7 +341,7 @@ class GameOfLife:
             pygame.draw.rect(
                 surface=self._screen,
                 color=self._config['living_cell_color'],
-                rect=(col*cell_size, row*cell_size, cell_size, cell_size)
+                rect=(col * cell_size, row * cell_size, cell_size, cell_size)
             )
 
         # Draw the horizontal lines of the grid
@@ -362,8 +349,8 @@ class GameOfLife:
             pygame.draw.line(
                 surface=self._screen,
                 color=self._config['grid_line_color'],
-                start_pos=(0, row*cell_size),
-                end_pos=(self._config['width'], row*cell_size)
+                start_pos=(0, row * cell_size),
+                end_pos=(self._config['width'], row * cell_size)
             )
 
         # Draw the vertical lines of the grid
@@ -371,10 +358,45 @@ class GameOfLife:
             pygame.draw.line(
                 surface=self._screen,
                 color=self._config['grid_line_color'],
-                start_pos=(col*cell_size, 0),
-                end_pos=(col*cell_size, self._config['height'])
+                start_pos=(col * cell_size, 0),
+                end_pos=(col * cell_size, self._config['height'])
             )
-        pygame.display.update()  # Update the content of the screem
+
+        # Draw zoom buttons
+        self._draw_button("Zoom In", 10, 10, 100, 40, (0, 200, 0))
+        self._draw_button("Zoom Out", 120, 10, 100, 40, (200, 0, 0))
+
+        pygame.display.update()  # Update the content of the screen
+
+    def _update_window_title(self) -> None:
+        """
+        Update the window title only if it has changed.
+        """
+        new_title = self._config['screen_caption'].format(
+            pat=self._current_pattern,
+            paused='paused' if self._is_paused else 'running'
+        ) + f" | Generation: {self._generation}"
+
+        if new_title != self._current_title:
+            pygame.display.set_caption(new_title)
+            self._current_title = new_title
+
+    def _draw_button(self, text: str, x: int, y: int, width: int, height: int, color: Tuple[int, int, int]) -> None:
+        """
+        Draw a button on the screen.
+
+        :param text: Text to display on the button
+        :param x: X-coordinate of the button
+        :param y: Y-coordinate of the button
+        :param width: Width of the button
+        :param height: Height of the button
+        :param color: Color of the button (RGB tuple)
+        """
+        pygame.draw.rect(self._screen, color, (x, y, width, height))
+        font = pygame.font.Font(None, 24)
+        text_surface = font.render(text, True, (255, 255, 255))
+        text_rect = text_surface.get_rect(center=(x + width // 2, y + height // 2))
+        self._screen.blit(text_surface, text_rect)
 
 
 if __name__ == '__main__':
@@ -385,6 +407,8 @@ if __name__ == '__main__':
         running = simulation.process_events()
         simulation.run_logic()
         simulation.draw()
-        simulation.clock.tick()
+
+        # Control the simulation speed (frames per second)
+        simulation.clock.tick(simulation._config.get('fps', 30))
 
     pygame.quit()

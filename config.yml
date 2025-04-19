@@ -7,6 +7,7 @@
     height: 800  # in pixels
     cell_size: 16  # in pixels (it should be a divisor of 'width' and 'height')
     grid_is_infinite: True  # bounded (finite) or unbounded (infinite) grid
+    resizable: True  # Allow the window to be resizable
     screen_caption: "Conway's Game of Life  [pattern {pat}]  ({paused})"
     # '{pat}' will be the pattern id (if any pattern is selected)
     # '{paused}' will be either 'paused' or 'running'
@@ -24,14 +25,9 @@
     # Both values must be between [0,100] and max must be greater than min
 
     # RULES   (you may change them if you want to carry out experiments)
-    # Any dead cell with exactly <3> living neighbours becomes a living cell
     reproduction: 3
-    # Any living cell with less than <2> living neighbours dies
     underpopulation: 2
-    # Any living cell with more than <3> living neighbours dies
     overpopulation: 3
-    # Next Generation: Any living cell with more than 'underpopulation' and
-    # less than 'overpopulation' neighbors lives on to the next generation
 
     # Control the simulation speed
     sleep: 0.15  # seconds to wait between iterations (grid updates)
